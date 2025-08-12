@@ -1,92 +1,132 @@
 Africa CDC Publications Tracker (Shiny)
-A Shiny web app that tracks and visualizes PubMed publications affiliated with Africa CDC.
-It fetches data from PubMed (via rentrez), caches in memory for the session, and provides:
+A Shiny web app that fetches and visualizes Africa CDC–affiliated publications from PubMed. It features a polished UI, background (non-blocking) refresh, skeleton placeholders on first load, and clean charts with counts shown inside bars only.
 
-A Dashboard with KPIs and charts
+Table of Contents
+Features
 
-An Author Explorer with clean author selection, trends, and top journals
+Screens
 
-A Publications Table with export options
+Tech Stack
 
-Non-blocking refresh (background fetch) + skeleton first load + overlay spinner
+Folder Structure
 
-Counts inside bars only (no duplicate labels) with clean hover tooltips
+Requirements
 
-Accurate unique author counts (case-insensitive, filtered for “Author/Authors” noise)
+Quick Start (Local)
 
-✨ Features
-Fast UX
+Configuration
 
-Background refresh using promises + future::multisession
+NCBI API Key (optional)
 
-First-load skeleton UI (shimmer placeholders) so the page never looks empty
+Batch Size / Limits
 
-Overlay spinner card during manual refresh (but the UI stays usable)
+Deploy to shinyapps.io (Manual)
 
-Clean visuals
+CI/CD: Auto-deploy from GitHub (Optional)
 
-Counts shown inside bars (Plotly), no duplicated numbers on hover
+1) Create shinyapps.io Token/Secret
 
-Dynamic left margin + dynamic height so long author names fit
+2) Add GitHub Repo Secrets
+
+3) Add GitHub Actions Workflow
+
+Troubleshooting
+
+Repo Checklist
+
+License
+
+Acknowledgements
+
+Features
+Fast UX & Resilience
+
+Background refresh using promises + future::multisession (UI never blocks)
+
+First-load skeleton placeholders so the page never looks empty
+
+Overlay spinner card during manual refresh (site remains usable)
+
+Clean Visuals
+
+Counts displayed inside bars only, with hover tooltips (no duplicated labels)
+
+Adaptive left margin & height so long author names fit on the y-axis
 
 Consistent Africa CDC color palette and polished CSS
 
-Smarter author handling
+Better Author Handling
 
-Removes stray “Author/Authors” tokens
+Strips stray “Author/Authors” tokens
 
-Case-insensitive unique counts (e.g., “Jane Doe” == “jane doe”)
+Case-insensitive de-duplication for unique author counts
 
-PubMed batching
+Robust PubMed Fetching
 
-Robust fetch with use_history = TRUE and pagination
+Uses rentrez with use_history = TRUE and batching
 
-Query:
+PubMed query:
 
 css
 Copy
 Edit
 (Africa Centres for Disease Control[Affiliation] AND Prevention[Affiliation]) OR (Africa CDC[Affiliation])
-🧱 Tech stack
+Screens
+Dashboard: KPIs, publications over time (bars + trend line), top journals, top authors
+
+Author Explorer: author picker, yearly trend, top journals, and a publications table
+
+Publications Table: searchable/exportable DT table with PubMed/DOI links
+
+Tech Stack
 R / Shiny
 
-Data wrangling: dplyr, stringr, lubridate
+dplyr, stringr, lubridate
 
-Charts: plotly
+plotly (charts), DT (tables)
 
-Tables: DT
+rentrez (PubMed API)
 
-PubMed API: rentrez
+shinyjs (UI helpers)
 
-UX helpers: shinyjs
+promises + future (async background work)
 
-Async: promises, future (multisession)
-
-📁 Project structure
+Folder Structure
 bash
 Copy
 Edit
 africa-cdc-pubs-tracker/
-├─ app.R                    # the Shiny app (UI + server)
+├─ app.R
 ├─ www/
-│  └─ acdc_logo.png         # static assets (images, css, ...)
-├─ README.md                # this file
+│  └─ acdc_logo.png           # static assets (images, css, ...)
 ├─ .gitignore
-├─ renv.lock                # (optional) locked package versions
-├─ runtime.txt              # (optional) pin R version, e.g. r-4.3.2
+├─ README.md
+├─ renv.lock                  # (optional) lock package versions
+├─ runtime.txt                # (optional) pin R version, e.g., r-4.3.2
 └─ .github/workflows/
-   └─ deploy-shinyapps.yml  # (optional) CI/CD to shinyapps.io
-Place all static assets (e.g., acdc_logo.png) in www/. In HTML, you can still reference it as src="acdc_logo.png" because Shiny serves /www at the web root.
+   └─ deploy-shinyapps.yml    # (optional) CI/CD to shinyapps.io
+Put static assets in www/. In HTML, reference as src="acdc_logo.png" (Shiny serves www/ at the web root).
 
-🚀 Run locally
-1) Install R packages
-If you use renv (recommended):
+Requirements
+R 4.2+ (recommended 4.3+)
+
+Packages:
+
+shiny, DT, dplyr, stringr, lubridate, plotly,
+
+rentrez, htmltools, shinyjs, promises, future
+
+(Optional) renv for reproducible package versions
+
+Quick Start (Local)
+1) Install packages
+With renv (recommended):
 
 r
 Copy
 Edit
 install.packages("renv")
-renv::restore()            # installs from renv.lock
+renv::restore()    # installs from renv.lock
 Without renv:
 
 r
@@ -96,74 +136,38 @@ install.packages(c(
   "shiny","DT","dplyr","stringr","lubridate","plotly",
   "rentrez","htmltools","shinyjs","promises","future"
 ))
-2) Start the app
+2) Run the app
 r
 Copy
 Edit
 shiny::runApp()
-The app will open in your browser.
-On first load, you’ll see skeleton placeholders; data renders as soon as PubMed results arrive.
+On first load you’ll see skeleton placeholders; content appears as soon as PubMed data is ready.
 
-⚙️ Configuration
-Background fetching
-The app runs PubMed fetches in a background R session:
+Manual refresh uses a non-blocking background request (the UI keeps working).
 
-r
-Copy
-Edit
-future::plan(multisession)            # app.R
-# On shinyapps.io you may prefer:
-# future::plan(multisession, workers = 1)
-PubMed limits / optional API key
-The app works without an API key.
-
-For heavier use, you can set an NCBI API key (faster + higher rate limits):
+Configuration
+NCBI API Key (optional)
+The app works without an API key. For heavier use (faster & higher limits):
 
 r
 Copy
 Edit
 Sys.setenv(ENTREZ_KEY = "<your-ncbi-api-key>")
-# or at runtime:
 rentrez::set_entrez_key(Sys.getenv("ENTREZ_KEY"))
-Get one from NCBI account settings. Not required for normal usage.
+Create an NCBI API key in your NCBI account settings.
 
-Change batch size / retmax
-Inside fetch_africacdc_pubs():
+Batch Size / Limits
+Inside app.R (fetch function):
 
 r
 Copy
 Edit
 fetch_africacdc_pubs(retmax = 5000, batch_size = 200)
-Tweak if you need fewer/more records per refresh.
+Reduce retmax if you want faster, smaller refreshes.
 
-📊 How to use
-Dashboard
+Increase batch_size for fewer API calls (be mindful of limits).
 
-KPIs: total publications, unique authors, journals
-
-Publications over time (with counts inside bars and a separate trend line)
-
-Top journals (bars with counts inside)
-
-Top authors (bars with counts inside; dynamic left margin for long names)
-
-Author Explorer
-
-Select an author via typeahead
-
-See their yearly trend and top journals (counts inside bars)
-
-Their publications list with PubMed links
-
-Publications Table
-
-Full table with copy/CSV/Excel/Print actions
-
-Title and IDs link to PubMed; DOI links to publisher
-
-☁️ Deploy to shinyapps.io (manual)
-From R:
-
+Deploy to shinyapps.io (Manual)
 r
 Copy
 Edit
@@ -174,23 +178,32 @@ rsconnect::setAccountInfo(
   secret = "YOUR_SECRET"
 )
 rsconnect::deployApp(".")
-Get your token/secret at: shinyapps.io → Account → Tokens.
+Get the token/secret at shinyapps.io → Account → Tokens.
 
-🤖 CI/CD: Auto-deploy from GitHub (optional)
-Create shinyapps.io token/secret
-shinyapps.io → Account → Tokens → Add Token → Show Secret.
+For background work on shinyapps.io, a conservative plan is:
 
-Add repo secrets on GitHub → Settings → Secrets and variables → Actions:
+r
+Copy
+Edit
+future::plan(multisession, workers = 1)
+CI/CD: Auto-deploy from GitHub (Optional)
+1) Create shinyapps.io Token/Secret
+shinyapps.io → Account → Tokens → Add Token → Show Secret
+Note your Account name, Token, and Secret.
 
-SHINYAPPS_ACCOUNT
+2) Add GitHub Repo Secrets
+Repo → Settings → Secrets and variables → Actions → New repository secret:
 
-SHINYAPPS_TOKEN
+SHINYAPPS_ACCOUNT = your shinyapps.io account name
 
-SHINYAPPS_SECRET
+SHINYAPPS_TOKEN = the token
 
-(optional) SHINYAPPS_APPNAME
+SHINYAPPS_SECRET = the secret
 
-Add workflow at .github/workflows/deploy-shinyapps.yml:
+(optional) SHINYAPPS_APPNAME = desired app name in shinyapps.io
+
+3) Add GitHub Actions Workflow
+Create .github/workflows/deploy-shinyapps.yml:
 
 yaml
 Copy
@@ -207,13 +220,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - uses: r-lib/actions/setup-r@v2
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
         with:
           use-public-rspm: true
 
-      - uses: r-lib/actions/setup-pandoc@v2
+      - name: Set up Pandoc
+        uses: r-lib/actions/setup-pandoc@v2
 
       - name: Cache R packages
         uses: actions/cache@v4
@@ -241,22 +257,49 @@ jobs:
           Rscript -e 'install.packages("rsconnect")'
           Rscript -e 'rsconnect::setAccountInfo(name=Sys.getenv("SHINYAPPS_ACCOUNT"), token=Sys.getenv("SHINYAPPS_TOKEN"), secret=Sys.getenv("SHINYAPPS_SECRET"))'
           Rscript -e 'appname <- Sys.getenv("SHINYAPPS_APPNAME"); if(nzchar(appname)) rsconnect::deployApp(appDir=".", appName=appname, forceUpdate=TRUE) else rsconnect::deployApp(appDir=".", forceUpdate=TRUE)'
-Push to main → GitHub Actions builds and deploys automatically.
+If your app is in a subfolder, change appDir="." to that folder.
 
-If your app lives in a subfolder, change appDir="." to that folder.
+Push to main → Action runs → app deploys/updates on shinyapps.io automatically.
 
-🧪 Troubleshooting
-No data shows initially
-First load fetches in background; you’ll see skeletons briefly. If it fails, a notification appears. Click Refresh PubMed Data to retry.
+Troubleshooting
+Nothing appears at first load
+The app shows skeleton placeholders while data loads. If fetching fails, a toast notification appears—use Refresh PubMed Data to retry.
 
-NCBI rate-limiting
-Heavy use can trigger limits. Consider setting ENTREZ_KEY (see above) or reducing retmax.
+Rate limiting / slow refresh
+Consider setting an NCBI API key, lowering retmax, or increasing batch_size cautiously.
 
-Plotly warnings about insidetextanchor
-We apply text/label options only to bar traces; scatter traces use hovertemplate only to avoid warnings.
+Plotly warnings
+We apply label options only to bar traces; the trend line is a scatter trace with hovertemplate only to avoid duplicated labels and warnings.
 
-Long author names get cut
-The Top Authors plot dynamically adjusts left margin and plot height based on label length and author count. If labels still clip, increase the max margin multiplier in app.R.
+Author labels clipped
+The “Top Authors” chart auto-sizes margin/height based on label length and count. Increase the scaling factor in app.R if needed.
 
-Static files not loading
-Ensure images are in /www. Shiny serves them at root; src="acdc_logo.png" is correct when the file lives at www/acdc_logo.png.
+Static files not found
+Ensure assets are in /www. Refer to them like src="acdc_logo.png" (served from the root).
+
+Repo Checklist
+ app.R added
+
+ www/ contains acdc_logo.png (and any other assets)
+
+ .gitignore present
+
+ (optional) renv.lock committed
+
+ (optional) runtime.txt with desired R version
+
+ (optional) .github/workflows/deploy-shinyapps.yml for CI/CD
+
+ README.md (this file)
+
+License
+MIT (change if you prefer). To formalize, add a LICENSE file.
+
+Acknowledgements
+Data: NCBI E-utilities via rentrez
+
+Charts: plotly • Tables: DT
+
+Async: promises + future
+
+UI helpers: shinyjs
