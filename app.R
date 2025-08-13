@@ -9,6 +9,7 @@ library(htmltools)
 library(shinyjs)
 library(promises)
 library(future)
+library(writexl)  # for native .xlsx download
 
 # run PubMed fetches in a separate R session
 future::plan(multisession)
@@ -88,7 +89,7 @@ loading_dashboardUI <- function() {
 
 # --- PubMed Fetch Function (batching, robust) ---
 fetch_africacdc_pubs <- function(retmax = 5000, batch_size = 200) {
-  query <- '(Africa Centres for Disease Control[Affiliation] AND Prevention[Affiliation]) OR (Africa CDC[Affiliation])'
+  query <- '(Africa Centres for Disease Control[Affiliation] AND Prevention[Affiliation]) OR (Africa CDC[Affiliation]) OR (Africa Centers for Disease Control[Affiliation] AND Prevention[Affiliation])'
   search <- entrez_search(db = "pubmed", term = query, retmax = retmax, use_history = TRUE)
   if (length(search$ids) == 0) return(NULL)
   all_summaries <- list()
@@ -333,6 +334,24 @@ server <- function(input, output, session) {
     if (is.null(df) || is.null(dr) || length(dr) != 2) return(df)
     df %>% filter(!is.na(Date), Date >= as.Date(dr[1]), Date <= as.Date(dr[2]))
   })
+  # Keep the slider value within [5, 15] and adapt to data (but never exceed 15)
+  observe({
+    df <- date_filtered_data()
+    have <- if (is.null(df)) 0 else dplyr::n_distinct(df$Journal)
+    max_allowed <- max(5, min(15, have))
+    cur <- isolate(input$top_n_journals %||% 10)
+    updateSliderInput(session, "top_n_journals",
+                      min = 5, max = 15,
+                      value = min(max(cur, 5), max_allowed))
+  })
+  
+  # Dynamic height so labels stay readable as bars increase
+  output$top_journals_ui <- renderUI({
+    req(input$top_n_journals)
+    n <- min(15, max(5, as.integer(input$top_n_journals)))
+    plot_height <- paste0(26 * n + 90, "px")   # ~26 px per row + padding
+    plotlyOutput("top_journals", height = plot_height)
+  })
   
   # Refresh logic (background)
   observeEvent(input$update_pubmed, {
@@ -393,16 +412,20 @@ server <- function(input, output, session) {
                tags$div(class = "kpi-box kpi-gold", icon("newspaper"), tags$span(class="kpi-num", n_journals), "Journals")
       ),
       tags$div(class = "card",
-               h4("Publications Over Time", style=sprintf("color:%s;font-weight:bold;", cdc_green)),
+               h4("Total Number of Publications Over Time by Africa CDC Staff", style=sprintf("color:%s;font-weight:bold;", cdc_green)),
                plotlyOutput("pubs_over_time", height="320px")
       ),
       tags$div(class = "card",
-               h4("Top Journals", style=sprintf("color:%s;font-weight:bold;", cdc_red)),
-               plotlyOutput("top_journals", height="270px")
+               div(style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;",
+                   h4("Africa CDC Top Journals", style=sprintf("color:%s;font-weight:bold;margin:0;", cdc_red)),
+                   sliderInput("top_n_journals", "Number of Journals to Display", min = 9, max = 15, value = 10, step = 1, width = "260px")
+               ),
+               uiOutput("top_journals_ui")  # dynamic plot height
       ),
       tags$div(class = "card",
-               h4("Top Authors", style=sprintf("color:%s;font-weight:bold;", cdc_gold)),
-               sliderInput("top_authors_count", "Number of Authors to Display:", min = 5, max = 30, value = 15, step = 1, width = "50%"),
+               div(style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;",
+                   h4("Top Authors Contributing to Africa CDC Publications", style=sprintf("color:%s;font-weight:bold;", cdc_gold)),
+                   sliderInput("top_authors_count", "Number of Authors to Display", min = 5, max = 30, value = 15, step = 1, width = "260px")),
                plotlyOutput("top_authors")  # let plotly set dynamic height
       )
     )
@@ -513,35 +536,67 @@ server <- function(input, output, session) {
       )
   })
   
-  # Author top journals
+  # Author top journals (restored)
   output$author_top_journals <- renderPlotly({
     df <- author_pubs()
     if (is.null(df) || nrow(df) == 0) return(NULL)
     
-    top_journals <- df %>%
-      count(Journal, name = "Publications") %>%
-      arrange(desc(Publications)) %>%
-      slice_head(n = 10) %>%
-      mutate(Journal = factor(Journal, levels = rev(Journal)))
+    tj <- df %>%
+      dplyr::filter(!is.na(Journal), Journal != "") %>%
+      dplyr::count(Journal, name = "Publications", sort = TRUE) %>%
+      dplyr::slice_head(n = 10)
+    
+    if (nrow(tj) == 0) return(NULL)
+    
+    # enforce highest -> lowest at the top
+    y_order <- rev(as.character(tj$Journal))
+    
+    max_chars <- max(nchar(as.character(tj$Journal)), na.rm = TRUE)
+    left_margin <- max(160, min(420, round(max_chars * 8.2)))
     
     plot_ly(
-      top_journals,
+      tj,
       x = ~Publications, y = ~Journal,
-      type = 'bar', orientation = 'h',
-      marker = list(color = rep(cdc_gold, nrow(top_journals))),
-      text = ~Publications, textposition = 'inside',
-      insidetextanchor = 'middle',
-      textfont = list(color = 'white', size = 12),
-      hovertemplate = 'Journal: %{y}<br>Publications: %{x}<extra></extra>'
+      type = "bar", orientation = "h",
+      marker = list(color = rep(cdc_gold, nrow(tj))),
+      text = ~Publications, textposition = "inside",
+      insidetextanchor = "middle",
+      textfont = list(color = "white", size = 12),
+      hovertemplate = "Journal: %{y}<br>Publications: %{x}<extra></extra>"
     ) %>%
       layout(
-        title = list(text = paste("Top Journals -", input$author_select), y=0.97),
-        yaxis = list(title = "", tickfont = list(size=14), automargin = TRUE),
-        xaxis = list(title = "Publications", tickfont = list(size=13)),
-        margin = list(l = 160, r = 20, t = 50, b = 55),
+        yaxis = list(
+          title = "", automargin = TRUE, tickfont = list(size = 14),
+          categoryorder = "array", categoryarray = y_order
+        ),
+        xaxis = list(title = "Publications"),
+        margin = list(l = left_margin, r = 20, t = 50, b = 55),
         plot_bgcolor = cdc_card, paper_bgcolor = cdc_card
       )
   })
+  
+  output$download_excel <- downloadHandler(
+    filename = function() paste0("africa_cdc_publications_", format(Sys.Date()), ".xlsx"),
+    content = function(file) {
+      df <- date_filtered_data()
+      req(df)
+      
+      # Clean authors exactly like the table
+      df$Authors <- sapply(df$Authors, function(a) {
+        authors <- unlist(strsplit(a, ";", fixed = TRUE))
+        authors <- trimws(gsub("\\s+", " ", authors))
+        authors <- authors[authors != "" & !grepl("^authors?$", authors, ignore.case = TRUE)]
+        paste(authors, collapse = "; ")
+      })
+      
+      # Format date and select export columns (no HTML)
+      df$Date <- as.character(format(df$Date, "%Y-%m-%d"))
+      export_df <- df[, c("Title", "Authors", "Year", "Journal", "Type", "PubMedID", "DOI", "Date")]
+      
+      writexl::write_xlsx(export_df, path = file)
+    }
+  )
+  
   
   # Author table
   output$author_pubs_table <- renderDT({
@@ -557,42 +612,73 @@ server <- function(input, output, session) {
   # Publications Table Tab — responds to date range
   output$pub_table <- renderDT({
     df <- date_filtered_data()
-    if (is.null(df) || nrow(df) == 0) return(datatable(data.frame(Message = "No data available")))
+    if (is.null(df) || nrow(df) == 0) {
+      return(datatable(data.frame(Message = "No data available")))
+    }
+    
+    # Clean author strings
     df$Authors <- sapply(df$Authors, function(a) {
       authors <- unlist(strsplit(a, ";", fixed = TRUE))
       authors <- trimws(gsub("\\s+", " ", authors))
       authors <- authors[authors != "" & !grepl("^authors?$", authors, ignore.case = TRUE)]
       paste(authors, collapse = "; ")
     })
+    
+    # Linkify for on-screen view
     df$Title <- mapply(function(title, pmid, authors) {
-      as.character(tags$a(title, href = sprintf("https://pubmed.ncbi.nlm.nih.gov/%s", pmid), target="_blank",
-                          title=paste("Authors:", authors)))
+      as.character(tags$a(title, href = sprintf("https://pubmed.ncbi.nlm.nih.gov/%s", pmid),
+                          target = "_blank", title = paste("Authors:", authors)))
     }, df$Title, df$PubMedID, df$Authors)
+    
     df$PubMedID <- mapply(function(pmid) {
-      as.character(tags$a(pmid, href = sprintf("https://pubmed.ncbi.nlm.nih.gov/%s", pmid), target="_blank"))
+      as.character(tags$a(pmid, href = sprintf("https://pubmed.ncbi.nlm.nih.gov/%s", pmid), target = "_blank"))
     }, df$PubMedID)
+    
     df$DOI <- ifelse(df$DOI != "",
                      mapply(function(doi) {
-                       as.character(tags$a(doi, href = sprintf("https://doi.org/%s", gsub("doi: *", "", doi)), target="_blank"))
+                       as.character(tags$a(doi, href = sprintf("https://doi.org/%s", gsub("doi: *", "", doi)), target = "_blank"))
                      }, df$DOI),
                      "")
+    
     df$Date <- as.character(format(df$Date, "%Y-%m-%d"))
-    show_df <- df[,c("Title", "Authors", "Year", "Journal", "Type", "PubMedID", "DOI", "Date")]
+    
+    show_df <- df[, c("Title", "Authors", "Year", "Journal", "Type", "PubMedID", "DOI", "Date")]
+    
+    # Export ALL rows in the current date range/search/order (not just current page)
+    export_all <- list(
+      modifier = list(page = "all", search = "applied", order = "applied"),
+      columns = ":visible",
+      format = list(
+        body = DT::JS(
+          "function(data, row, col, node){ return (typeof data === 'string') ? data.replace(/<[^>]*>/g, '') : data; }"
+        )
+      )
+    )
+    
     datatable(
       show_df,
       escape = FALSE,
       options = list(
-        pageLength = 20, scrollX = TRUE,
-        dom = 'Bfrtip', buttons = c('copy', 'csv', 'excel', 'print'),
+        pageLength = 20,
+        lengthMenu = list(c(20, 50, 100, 200, 500, -1), c(20, 50, 100, 200, 500, 'All')),
+        scrollX = TRUE,
+        dom = 'Bfrtip',
+        buttons = list(
+          list(extend = "copyHtml5",  exportOptions = export_all),
+          list(extend = "csvHtml5",   filename = "africa_cdc_publications", exportOptions = export_all),
+          list(extend = "excelHtml5", filename = "africa_cdc_publications", exportOptions = export_all),
+          list(extend = "print",      exportOptions = export_all)
+        ),
         columnDefs = list(list(targets = "_all", className = "dt-left")),
         autoWidth = TRUE
       ),
-      extensions = c('Buttons', 'Scroller'),
+      extensions = c('Buttons'),   # <- remove 'Scroller' here
       rownames = FALSE,
       selection = 'single',
       class = 'display nowrap stripe'
     )
-  })
+  }, server = FALSE)  # <- critical: client-side so all rows are present in browser
+  
   
   # Dashboard Visuals — respond to date range
   output$pubs_over_time <- renderPlotly({
@@ -631,47 +717,62 @@ server <- function(input, output, session) {
   })
   
   output$top_journals <- renderPlotly({
+    req(input$top_n_journals)
+    n <- min(15, max(5, as.integer(input$top_n_journals)))
+    
     df <- date_filtered_data()
     if (is.null(df) || nrow(df) == 0) return(NULL)
     
     top_journals <- df %>%
-      group_by(Journal) %>%
-      summarise(Publications = n(), .groups = "drop") %>%
-      arrange(desc(Publications)) %>%
-      slice_head(n = 10) %>%
-      mutate(Journal = factor(Journal, levels = rev(Journal)))
+      dplyr::count(Journal, name = "Publications", sort = TRUE) %>%
+      dplyr::slice_head(n = n)                         # already highest → lowest
+    
+    # exact top→bottom order for the y-axis
+    y_order <- rev(as.character(top_journals$Journal))
+    
+    max_chars <- if (nrow(top_journals)) max(nchar(as.character(top_journals$Journal)), na.rm = TRUE) else 0
+    left_margin <- max(160, min(420, round(max_chars * 8.2)))
+    
+    max_pub <- if (nrow(top_journals)) max(top_journals$Publications, na.rm = TRUE) else 1
+    pretty_ticks <- pretty(c(0, max_pub), n = 4)
+    x_max <- max(pretty_ticks)
+    x_max <- max(x_max, max_pub + 1)
+    x_max <- min(x_max, max_pub * 1.12)               # compact x-axis
     
     plot_ly(
       top_journals,
       x = ~Publications, y = ~Journal,
-      type = 'bar', orientation = 'h',
+      type = "bar", orientation = "h",
       marker = list(color = rep(cdc_red, nrow(top_journals))),
-      text = ~Publications, textposition = 'inside',
-      insidetextanchor = 'middle',
-      textfont = list(color = 'white', size = 12),
-      hovertemplate = 'Journal: %{y}<br>Publications: %{x}<extra></extra>'
+      text = ~Publications, textposition = "inside",
+      insidetextanchor = "middle",
+      textfont = list(color = "white", size = 12),
+      hovertemplate = "Journal: %{y}<br>Publications: %{x}<extra></extra>"
     ) %>%
       layout(
-        yaxis = list(title = "", tickfont = list(size=13), automargin = TRUE),
-        xaxis = list(title = "Publications"),
-        margin = list(l = 160, r = 20, t = 40, b = 50),
+        yaxis = list(
+          title = "", tickfont = list(size = 13), automargin = TRUE,
+          categoryorder = "array", categoryarray = y_order  # <- enforce order
+        ),
+        xaxis = list(title = "Publications", range = c(0, x_max)),
+        bargap = 0.25,
+        margin = list(l = left_margin, r = 18, t = 10, b = 45),
         plot_bgcolor = cdc_card, paper_bgcolor = cdc_card
       )
   })
   
   output$top_authors <- renderPlotly({
     req(input$top_authors_count)
-    n <- as.integer(input$top_authors_count)
+    n <- min(15, max(5, as.integer(input$top_authors_count)))
     
     df <- date_filtered_data()
     if (is.null(df) || nrow(df) == 0) return(NULL)
     
-    # Clean authors (drop blanks and "author/authors")
+    # Clean & aggregate
     a <- unlist(strsplit(paste(df$Authors, collapse = ";"), ";", fixed = TRUE))
     a <- trimws(gsub("\\s+", " ", a))
     a <- a[a != "" & !grepl("^authors?$", a, ignore.case = TRUE)]
     
-    # Case-insensitive aggregation; keep the first-seen casing for label
     df_names <- tibble::tibble(name = a, key = tolower(a))
     ta <- df_names %>%
       dplyr::count(key, name = "Freq") %>%
@@ -679,36 +780,38 @@ server <- function(input, output, session) {
         df_names %>% dplyr::group_by(key) %>% dplyr::summarise(label = dplyr::first(name), .groups = "drop"),
         by = "key"
       ) %>%
-      dplyr::arrange(desc(Freq)) %>%
+      dplyr::arrange(dplyr::desc(Freq)) %>%
       dplyr::slice_head(n = n)
     
-    # Dynamic sizing so all labels fit
-    max_chars <- if (nrow(ta)) max(nchar(ta$label)) else 0
-    left_margin <- max(180, min(420, round(max_chars * 8.5)))  # scale margin by name length
-    plot_height <- 80 + n * 32                                 # ~32px per row
+    # exact top→bottom order for the y-axis
+    y_order <- rev(as.character(ta$label))
+    
+    max_chars <- if (nrow(ta)) max(nchar(as.character(ta$label))) else 0
+    left_margin <- max(180, min(420, round(max_chars * 8.5)))
+    plot_height <- 80 + n * 32
     
     plot_ly(
       ta,
-      x = ~Freq,
-      y = ~reorder(label, Freq),
-      type = 'bar',
-      orientation = 'h',
+      x = ~Freq, y = ~label,
+      type = "bar", orientation = "h",
       marker = list(color = rep(cdc_gold, nrow(ta))),
-      text = ~Freq,
-      textposition = 'inside',
-      insidetextanchor = 'middle',
-      textfont = list(color = 'white', size = 12),
-      hovertemplate = 'Author: %{y}<br>Publications: %{x}<extra></extra>',
+      text = ~Freq, textposition = "inside",
+      insidetextanchor = "middle",
+      textfont = list(color = "white", size = 12),
+      hovertemplate = "Author: %{y}<br>Publications: %{x}<extra></extra>",
       height = plot_height
     ) %>%
       layout(
-        yaxis = list(title = "", tickfont = list(size = 15), autorange = "reversed", automargin = TRUE),
+        yaxis = list(
+          title = "", tickfont = list(size = 15), automargin = TRUE,
+          categoryorder = "array", categoryarray = y_order  # <- enforce order
+        ),
         xaxis = list(title = "Publications"),
         margin = list(l = left_margin, r = 20, t = 40, b = 50),
-        plot_bgcolor = cdc_card,
-        paper_bgcolor = cdc_card
+        plot_bgcolor = cdc_card, paper_bgcolor = cdc_card
       )
   })
+  
   
   # Tab switcher with skeleton on first load
   output$tab_content <- renderUI({
@@ -721,7 +824,14 @@ server <- function(input, output, session) {
     } else if (tab == "author") {
       tags$div(class = "card", style="max-width:1000px;margin:0 auto;", uiOutput("author_explorer_ui"))
     } else {
-      tags$div(class = "card", DTOutput("pub_table"))
+      tags$div(class = "card",
+               div(style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;",
+                   tags$h5("Publications (filtered)", style=sprintf("color:%s;font-weight:bold;margin:0;", cdc_dark)),
+                   downloadButton("download_excel", "Download Excel (.xlsx)", class = "btn btn-success")
+               ),
+               DTOutput("pub_table")
+      )
+      
     }
   })
 }
